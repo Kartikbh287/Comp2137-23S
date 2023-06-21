@@ -1,0 +1,59 @@
+#!/bin/bash
+
+#System Info.
+cat << EOF
+System Information
+---------------------
+Hostname: $(hostname)
+Operating System: $(lsb_release -d | awk -F'\t' '{print $2}')
+Uptime: $(uptime -p)
+---------------------
+EOF
+
+#Hardware Info.
+cat << EOF
+Hardware Information
+---------------------
+CPU Model: $(lscpu | awk -F': ' '/Model name/ {print $2}')
+CPU Speed: $(lscpu | awk -F': ' '/CPU MHz/ {print $2}') MHz
+CPU MAX Speed: $(lscpu | awk -F': ' '/CPU max MHz/ {print $2}') MHz
+RAM: $(grep -m 1 'MemTotal' /proc/meminfo | awk '{print $2/1024/1024 " GB"}')
+Disks:
+$(lsblk --output NAME,SIZE,TYPE,MOUNTPOINT,LABEL --exclude 7 | awk '!/loop/ {printf "%-8s %-8s %-4s %-8s %-7s %s\n", $1, $2, $3, $4, $5, $6}')
+Video card: $(lspci -nnk | awk -F': ' '/VGA/ {print $2}' | uniq)
+---------------------
+EOF
+
+
+#Network Info.
+cat << EOF
+Network Information
+---------------------
+FQDN: $(hostname -f)
+Host Address: $(ip -4 address show dev $(ip -4 route show default | awk '/default/ {print $5}') | awk /inet / '{print $2}')
+Gateway IP: $(ip -4 route show default | awk '/default/ {print $3}')
+DNS Server(s): $(systemd-resolve -status | awk '/DNS Servers:/ {print $3}')
+Network Interface Information:
+$(ip -o -4 add show | awk '{print $2, $4}')
+---------------------
+EOF
+
+
+#System Status
+
+cat << EOF
+System Status
+---------------------
+Users Logged In: $(who | awk '{print $1}' | sort | uniq | paste -s -d ',')
+Disk Space:
+$(df -h)
+Process Count: $(ps E | wc -l)
+Load Averages: $(uptime | awk -F'[a-z]:' '{print $2}')
+Memory Allocation:
+$(free -h | awk '/^Mem/ {print $1 "\t" $2 "\t" $7}')
+Listening Network Ports:
+$(ss -tuln | awk 'NR<1 {print $1 "\t" $2 "\t" $3 "\t" $5}')
+UFW Rules:
+$(sudo ufw status numbered | grep -v 'Status: ')
+EOF
+
