@@ -1,0 +1,110 @@
+#!/bin/bash
+
+# A function designed to exhibit status messages
+ display_message() {
+  echo "==============================="
+  echo "$1"
+  echo "==============================="
+  echo
+}
+
+# A function designed to exhibit error messages and halt the process
+ display_error() {
+  echo "Error: $1"
+  exit 1
+}
+
+# Now, let's verify whether the script is executing with root privileges
+if [ "$(id -u)" -ne 0 ]; then
+  display_error "This script must be run as root."
+fi
+
+# update the system's hostname
+display_message "hostname update in progress"
+hostnamectl set-hostname autosrv || display_error "Sorry, Failed to update hostname!"
+
+# Modify the network configration 
+display_message "Updating network configuration"
+network_file="/etc/netplan/01-netcfg.yaml"
+network_config=$(cat <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ens34:
+      dhcp4: no
+      addresses: [192.168.16.21/24]
+      gateway4: 192.168.16.1
+      nameservers:
+        addresses: [192.168.16.1]
+        search: [home.arpa, localdomain]
+EOF
+)
+echo "$network_config" > "$network_file" || display_error "Failed to update network configuration"
+netplan apply || display_error "Failed to apply network configuration"
+
+# installing software
+display_message "software installing"
+if ! apt update; then
+  display_error "Encountered an issue while updating package repositories"
+fi
+
+if ! apt install -y openssh-server apache2 squid ufw; then
+  display_error "Encountered a problem during software installation"
+fi
+
+# Setting up the SSH server configuration 
+display_message "Configuring SSH server"
+
+ssh_config="/etc/ssh/sshd_config"
+if sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' "$ssh_config"; then
+  display_message "PasswordAuthentication setting updated successfully."
+else
+  display_error " updating PasswordAuthentication setting failed"
+fi
+
+if systemctl restart ssh; then
+  display_message "restarting ssh server successful."
+else
+  display_error "Restarting ssh server failed."
+fi
+
+# Setting up the configuration for the Apache web server
+display_message "Configuring Apache web server"
+sed -i 's/Listen 80/Listen 0.0.0.0:80/' /etc/apache2/ports.conf || display_error "Failed to configure Apache ports"
+a2dissite 000-default || display_error "Failed to disable default Apache site"
+a2enmod ssl || display_error "Enabling Apache SSL module failed"
+a2ensite default-ssl || display_error "Enabling Apache SSL site failed"
+systemctl restart apache2 || display_error "Restarting Apache web server failed"
+
+# Setting up the Configuration of Squid web proxy
+display_message "Configuring Squid web proxy"
+sed -i 's/http_port 3128/http_port 0.0.0.0:3128/' /etc/squid/squid.conf || display_error "Failed to configure Squid port"
+systemctl restart squid || display_error "Restarting Squid web proxy failed"
+
+# Setting up Configuration of firewall with UFW
+display_message "Configuring firewall with UFW"
+ufw allow 22/tcp || display_error "allowing SSH failed"
+ufw allow 80/tcp || display_error "allowing HTTP failed"
+ufw allow 443/tcp || display_error "allowing HTTPS failed"
+ufw allow 3128/tcp || display_error "allowing Squid proxy failed"
+ufw enable || display_error "Failed to enable UFW"
+
+# Creating user accounts
+display_message "Creating user accounts"
+user_list=("brownie" "aubrey" "captain" "snibbles" "sandy" "perrier" "cindy" "tiger" "dennis" "yoda" "scooter")
+for user in "${user_list[@]}"; do
+  useradd -m -s /bin/bash "$user" || display_error "creating user $user failed"
+  mkdir -p "/home/$user/.ssh" || display_error "Creating .ssh directory for user $user failed"
+  ssh-keygen -q -t rsa -N "" -f "/home/$user/.ssh/id_rsa" || display_error "Generating RSA key for user $user failed"
+  ssh-keygen -q -t ed25519 -N "" -f "/home/$user/.ssh/id_ed25519" || display_error "Generating Ed25519 key for user $user failed"
+  cat "/home/$user/.ssh/id_rsa.pub" >> "/home/$user/.ssh/authorized_keys" || display_error "Adding RSA public key for user $user failed"
+  cat "/home/$user/.ssh/id_ed25519.pub" >> "/home/$user/.ssh/authorized_keys" || display_error "Adding Ed25519 public key for user $user failed"
+  chown -R "$user:$user" "/home/$user/.ssh" || display_error "Setting ownership for .ssh directory of user $user failed"
+done
+
+# setting up configration of sudo access for dennis
+display_message "Configuring sudo access for dennis"
+echo "dennis ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/dennis || display_error "configuring sudo access for dennis failed"
+
+display_message "System configuration succesfully completed"
